@@ -15,8 +15,14 @@ RUN pip install --no-cache-dir -r requirements.txt openai-whisper
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
 
+# 컨테이너 내부에서 인증서 생성
+RUN mkdir -p /app/certs && openssl req -x509 -newkey rsa:2048 \
+    -keyout /app/certs/key.pem -out /app/certs/cert.pem \
+    -days 365 -nodes -subj "/CN=versevibe" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:0.0.0.0"
+
 WORKDIR /app/backend
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "main.py"]
