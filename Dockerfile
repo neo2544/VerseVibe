@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 # ffmpeg 설치 (오디오 변환용)
 RUN apt-get update && \
