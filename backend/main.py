@@ -3,6 +3,7 @@ import asyncio
 import base64
 import json
 import sys
+import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -79,6 +80,8 @@ async def websocket_endpoint(websocket: WebSocket):
         nonlocal current_song, lyrics_cache, latest_audio, running
 
         consecutive_failures = 0
+        last_shazam_time = 0.0
+        MIN_SHAZAM_INTERVAL = 8.0  # Shazam 호출 간 최소 8초 간격
 
         while running:
             # 새 오디오가 올 때까지 대기
@@ -94,6 +97,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if audio_bytes is None:
                 continue
+
+            # Shazam 호출 쿨다운 - 최소 간격 보장
+            elapsed = time.monotonic() - last_shazam_time
+            if elapsed < MIN_SHAZAM_INTERVAL:
+                wait_time = MIN_SHAZAM_INTERVAL - elapsed
+                print(f"⏳ Shazam 쿨다운: {wait_time:.1f}초 대기")
+                await asyncio.sleep(wait_time)
+                if not running:
+                    break
 
             # 연속 실패 시 백오프 (3회 이상이면 대기 후 재시도)
             if consecutive_failures >= 3:
@@ -122,6 +134,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # 음악 인식
             try:
+                last_shazam_time = time.monotonic()
                 result = await recognize_audio(audio_bytes, status_callback=whisper_status_callback, whisper_enabled=whisper_enabled)
             except Exception as e:
                 print(f"인식 오류: {e}")
@@ -197,4 +210,17 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import os
+    import ssl
+
+    cert_dir = os.path.join(os.path.dirname(__file__), "..", "certs")
+    cert_file = os.path.join(cert_dir, "cert.pem")
+    key_file = os.path.join(cert_dir, "key.pem")
+
+    if os.path.exists(cert_file) and os.path.exists(key_file):
+        print("🔒 HTTPS 모드로 시작합니다 (https://0.0.0.0:8000)")
+        uvicorn.run(app, host="0.0.0.0", port=8000,
+                    ssl_keyfile=key_file, ssl_certfile=cert_file)
+    else:
+        print("⚠️  인증서 없음 - HTTP 모드로 시작합니다 (마이크 사용 불가할 수 있음)")
+        uvicorn.run(app, host="0.0.0.0", port=8000)

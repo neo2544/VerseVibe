@@ -22,23 +22,28 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--background);
     color: var(--text);
-    min-height: 100vh;
-    overflow-x: hidden;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
 }
 
 .container {
+    width: 100%;
     max-width: 480px;
     margin: 0 auto;
-    padding: 20px;
-    min-height: 100vh;
+    padding: 12px 16px;
+    height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 /* Header */
 .header {
     text-align: center;
-    padding: 20px 0;
+    padding: 8px 0;
+    flex-shrink: 0;
 }
 
 .header h1 {
@@ -383,21 +388,29 @@ body {
 }
 
 /* Lyrics Screen */
+#lyrics-screen {
+    padding: 8px 0;
+    justify-content: flex-start;
+    align-items: stretch;
+    min-height: 0;
+    overflow: hidden;
+}
+
 .song-info {
     text-align: center;
-    padding: 15px;
+    padding: 10px 15px;
     background: var(--surface);
-    border-radius: 15px;
-    width: 100%;
-    margin-bottom: 20px;
+    border-radius: 12px;
+    margin-bottom: 8px;
     position: relative;
+    flex-shrink: 0;
 }
 
 .live-badge {
     position: absolute;
-    top: 10px;
-    right: 15px;
-    font-size: 0.8rem;
+    top: 8px;
+    right: 12px;
+    font-size: 0.75rem;
     animation: blink 1s infinite;
 }
 
@@ -407,14 +420,14 @@ body {
 }
 
 #song-title {
-    font-size: 1.3rem;
+    font-size: 1.2rem;
     font-weight: 700;
-    margin-bottom: 5px;
+    margin-bottom: 2px;
 }
 
 #song-artist {
     color: var(--text-dim);
-    font-size: 1rem;
+    font-size: 0.9rem;
 }
 
 /* 곡 변경 애니메이션 */
@@ -428,20 +441,26 @@ body {
     100% { transform: scale(1); }
 }
 
+/* 가사 스크롤 박스 */
 .lyrics-container {
     flex: 1;
-    width: 100%;
     overflow-y: auto;
-    padding: 20px 10px;
+    overflow-x: hidden;
+    padding: 16px 10px;
     text-align: center;
     scroll-behavior: smooth;
+    min-height: 0;
+    max-height: 55vh;
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
 }
 
 .lyric-line {
-    padding: 12px 15px;
-    margin: 8px 0;
+    padding: 10px 12px;
+    margin: 4px 0;
     border-radius: 10px;
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     color: var(--text-dim);
     transition: all 0.3s ease;
     line-height: 1.5;
@@ -450,19 +469,73 @@ body {
 .lyric-line.active {
     background: linear-gradient(135deg, var(--primary), var(--accent));
     color: white;
-    font-size: 1.3rem;
+    font-size: 1.2rem;
     font-weight: 600;
-    transform: scale(1.02);
+    box-shadow: 0 2px 12px rgba(108, 92, 231, 0.3);
 }
 
 .lyric-line.past {
-    opacity: 0.5;
+    opacity: 0.35;
+}
+
+.lyrics-spacer {
+    flex-shrink: 0;
+}
+
+/* 싱크 보정 버튼 */
+.sync-controls {
+    display: flex;
+    gap: 6px;
+}
+
+.sync-btn {
+    padding: 6px 12px;
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+.sync-btn:active {
+    background: var(--primary-dark);
+    border-color: var(--primary);
+    color: white;
+}
+
+/* 싱크 보정 피드백 */
+.sync-indicator {
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--accent);
+    height: 18px;
+    line-height: 18px;
+    flex-shrink: 0;
+    transition: opacity 0.3s;
+}
+
+/* 하단 바 */
+.lyrics-bottom-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0 4px;
+    flex-shrink: 0;
 }
 
 .controls {
     display: flex;
-    gap: 15px;
-    padding: 20px 0;
+    gap: 8px;
+}
+
+.btn-sm {
+    padding: 8px 20px;
+    font-size: 0.85rem;
 }
 
 /* Error Screen */
@@ -478,10 +551,143 @@ body {
     text-align: center;
 }
 
+/* History Screen */
+#history-screen {
+    padding: 8px 0;
+    justify-content: flex-start;
+}
+
+.history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 8px 4px 12px;
+    flex-shrink: 0;
+}
+
+.history-header h2 {
+    font-size: 1.3rem;
+    font-weight: 700;
+}
+
+.history-list {
+    flex: 1;
+    width: 100%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 0;
+    padding: 4px 0;
+}
+
+.history-item {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.history-item-icon {
+    font-size: 1.4rem;
+    flex-shrink: 0;
+    line-height: 1;
+    padding-top: 2px;
+}
+
+.history-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.history-item-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-item-artist {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-item-time {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+    opacity: 0.7;
+}
+
+.history-item-count {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+    flex-shrink: 0;
+    padding-top: 2px;
+}
+
+.history-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 1rem;
+    width: 100%;
+}
+
+.history-footer {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    padding: 12px 0 4px;
+    flex-shrink: 0;
+}
+
+.btn.btn-danger {
+    background: transparent;
+    color: var(--error);
+    border: 1px solid var(--error);
+}
+
+.btn.btn-danger:hover {
+    background: var(--error);
+    color: white;
+}
+
+/* History list scrollbar */
+.history-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.history-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+    background: rgba(108, 92, 231, 0.5);
+    border-radius: 2px;
+}
+
+.history-list::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+}
+
 /* Mobile Responsive */
 @media (max-width: 480px) {
     .container {
-        padding: 15px;
+        padding: 10px 12px;
     }
 
     .header h1 {
@@ -497,13 +703,18 @@ body {
         font-size: 0.95rem;
     }
 
+    .btn-sm {
+        padding: 7px 16px;
+        font-size: 0.8rem;
+    }
+
     .lyric-line {
-        font-size: 1rem;
-        padding: 10px 12px;
+        font-size: 0.95rem;
+        padding: 8px 10px;
     }
 
     .lyric-line.active {
-        font-size: 1.15rem;
+        font-size: 1.05rem;
     }
 }
 
@@ -513,10 +724,14 @@ body {
 }
 
 .lyrics-container::-webkit-scrollbar-track {
-    background: var(--surface);
+    background: transparent;
 }
 
 .lyrics-container::-webkit-scrollbar-thumb {
-    background: var(--primary);
+    background: rgba(108, 92, 231, 0.5);
     border-radius: 2px;
+}
+
+.lyrics-container::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
 }

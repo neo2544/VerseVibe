@@ -6,3 +6,4 @@ venv/
 *.wav
 *.webm
 .DS_Store
+certs/

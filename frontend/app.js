@@ -16,6 +16,9 @@ class VerseVibe {
         this.attemptCount = 0;
         this.whisperEnabled = false;
 
+        // 싱크 보정
+        this.syncAdjust = 0; // 사용자 수동 보정값 (초)
+
         // 오디오 시각화
         this.audioContext = null;
         this.analyser = null;
@@ -26,7 +29,8 @@ class VerseVibe {
             initial: document.getElementById('initial-screen'),
             listening: document.getElementById('listening-screen'),
             lyrics: document.getElementById('lyrics-screen'),
-            error: document.getElementById('error-screen')
+            error: document.getElementById('error-screen'),
+            history: document.getElementById('history-screen')
         };
 
         this.elements = {
@@ -51,8 +55,19 @@ class VerseVibe {
             whisperToggleDesc: document.getElementById('whisper-toggle-desc'),
             whisperToggleLyrics: document.getElementById('whisper-toggle-lyrics'),
             whisperToggleLyricsLabel: document.getElementById('whisper-toggle-lyrics-label'),
-            whisperModeBadge: document.getElementById('whisper-mode-badge')
+            whisperModeBadge: document.getElementById('whisper-mode-badge'),
+            syncMinusBtn: document.getElementById('sync-minus-btn'),
+            syncPlusBtn: document.getElementById('sync-plus-btn'),
+            syncIndicator: document.getElementById('sync-indicator'),
+            historyBtn: document.getElementById('history-btn'),
+            historyBackBtn: document.getElementById('history-back-btn'),
+            historyClearBtn: document.getElementById('history-clear-btn'),
+            historyList: document.getElementById('history-list'),
+            historyEmpty: document.getElementById('history-empty')
         };
+
+        // 히스토리 중복 방지
+        this._lastRecordedSongKey = null;
 
         this.init();
     }
@@ -69,9 +84,20 @@ class VerseVibe {
         this.elements.whisperToggle.addEventListener('change', (e) => {
             this.setWhisperEnabled(e.target.checked);
         });
-        this.elements.whisperToggleLyrics.addEventListener('change', (e) => {
-            this.setWhisperEnabled(e.target.checked);
-        });
+        if (this.elements.whisperToggleLyrics) {
+            this.elements.whisperToggleLyrics.addEventListener('change', (e) => {
+                this.setWhisperEnabled(e.target.checked);
+            });
+        }
+
+        // 싱크 보정 버튼
+        this.elements.syncMinusBtn.addEventListener('click', () => this.adjustSync(-0.5));
+        this.elements.syncPlusBtn.addEventListener('click', () => this.adjustSync(0.5));
+
+        // 히스토리 버튼
+        this.elements.historyBtn.addEventListener('click', () => this.showHistory());
+        this.elements.historyBackBtn.addEventListener('click', () => this.showScreen('initial'));
+        this.elements.historyClearBtn.addEventListener('click', () => this.clearHistory());
     }
 
     setWhisperEnabled(enabled) {
@@ -84,10 +110,14 @@ class VerseVibe {
             : 'OFF - Shazam만 사용 (빠름)';
 
         // 가사 화면 토글 동기화
-        this.elements.whisperToggleLyrics.checked = enabled;
-        this.elements.whisperToggleLyricsLabel.textContent = enabled
-            ? 'Whisper ON'
-            : 'Whisper OFF';
+        if (this.elements.whisperToggleLyrics) {
+            this.elements.whisperToggleLyrics.checked = enabled;
+        }
+        if (this.elements.whisperToggleLyricsLabel) {
+            this.elements.whisperToggleLyricsLabel.textContent = enabled
+                ? 'Whisper ON'
+                : 'Whisper OFF';
+        }
 
         // 인식 중 화면 배지
         if (this.elements.whisperModeBadge) {
@@ -96,7 +126,7 @@ class VerseVibe {
 
         // 녹음 중이면 다음 사이클부터 반영
         if (this.isRecording) {
-            this.recordingDuration = enabled ? 10000 : 5000;
+            this.recordingDuration = enabled ? 15000 : 10000;
         }
     }
 
@@ -174,8 +204,9 @@ class VerseVibe {
             this.mimeType = 'audio/webm';
         }
 
-        // 녹음 사이클 시작 (Whisper OFF: 5초, ON: 10초)
-        this.recordingDuration = this.whisperEnabled ? 10000 : 5000;
+        // 녹음 사이클 시작 (Whisper OFF: 10초, ON: 15초)
+        this.recordingDuration = this.whisperEnabled ? 15000 : 10000;
+        this.songRecognized = false;
         this.startRecordingCycle();
     }
 
@@ -183,6 +214,7 @@ class VerseVibe {
         if (!this.isRecording) return;
 
         this.audioChunks = [];
+        this.cycleStartTime = Date.now();
 
         this.mediaRecorder = new MediaRecorder(this.stream, { mimeType: this.mimeType });
 
@@ -213,7 +245,7 @@ class VerseVibe {
             this.elements.progressFill.style.width = `${Math.min(percent, 100)}%`;
         }, 100);
 
-        // 5초 후 녹음 중지 → onstop에서 전송 + 다음 사이클
+        // recordingDuration 후 녹음 중지 → onstop에서 전송 + 다음 사이클
         this.recordingTimeout = setTimeout(() => {
             clearInterval(this.progressInterval);
             this.elements.progressFill.style.width = '0%';
@@ -343,6 +375,15 @@ class VerseVibe {
     handleRecognized(data) {
         console.log(`새 곡 인식: ${data.title} - ${data.artist} (offset: ${data.offset})`);
 
+        // 인식 기록 저장
+        this.recordSong(data.title, data.artist);
+
+        // 곡 인식 후 위치 업데이트 간격을 늘림 (Shazam 호출 빈도 감소)
+        if (!this.songRecognized) {
+            this.songRecognized = true;
+            this.recordingDuration = 20000; // 인식 후 20초 간격으로 위치 보정
+        }
+
         // 곡 정보 표시
         this.elements.songTitle.textContent = data.title;
         this.elements.songArtist.textContent = data.artist;
@@ -351,8 +392,10 @@ class VerseVibe {
         this.lyrics = data.lyrics || [];
         this.renderLyrics();
 
-        // 현재 위치 설정
-        this.currentOffset = data.offset || 0;
+        // 현재 위치 설정 (녹음~결과수신 지연 보정)
+        const elapsed = this.cycleStartTime ? (Date.now() - this.cycleStartTime) / 1000 : 0;
+        this.currentOffset = (data.offset || 0) + elapsed;
+        console.log(`⏱️ 싱크 보정: offset ${data.offset?.toFixed(1)}s + 지연 ${elapsed.toFixed(1)}s = ${this.currentOffset.toFixed(1)}s`);
         this.startOffsetTimer();
 
         // 곡 변경 시 애니메이션 효과
@@ -366,9 +409,25 @@ class VerseVibe {
     }
 
     handlePositionUpdate(data) {
-        // 서버에서 받은 위치로 보정
-        this.currentOffset = data.offset;
+        // 서버에서 받은 위치로 보정 (녹음~결과수신 지연 보정)
+        const elapsed = this.cycleStartTime ? (Date.now() - this.cycleStartTime) / 1000 : 0;
+        this.currentOffset = data.offset + elapsed;
+        console.log(`⏱️ 위치 보정: offset ${data.offset.toFixed(1)}s + 지연 ${elapsed.toFixed(1)}s = ${this.currentOffset.toFixed(1)}s`);
         this.updateCurrentLyric();
+    }
+
+    adjustSync(delta) {
+        this.syncAdjust += delta;
+        // 피드백 표시
+        const sign = this.syncAdjust >= 0 ? '+' : '';
+        this.elements.syncIndicator.textContent = `싱크 보정: ${sign}${this.syncAdjust.toFixed(1)}s`;
+        // 즉시 가사 위치 반영
+        this.updateCurrentLyric();
+        // 3초 후 표시 숨김
+        clearTimeout(this._syncIndicatorTimeout);
+        this._syncIndicatorTimeout = setTimeout(() => {
+            this.elements.syncIndicator.textContent = '';
+        }, 3000);
     }
 
     renderLyrics() {
@@ -379,6 +438,11 @@ class VerseVibe {
             return;
         }
 
+        // 상단 여백 (첫 가사가 중앙에 올 수 있도록)
+        const topSpacer = document.createElement('div');
+        topSpacer.className = 'lyrics-spacer';
+        this.elements.lyricsContainer.appendChild(topSpacer);
+
         this.lyrics.forEach((lyric, index) => {
             const div = document.createElement('div');
             div.className = 'lyric-line';
@@ -386,6 +450,19 @@ class VerseVibe {
             div.dataset.index = index;
             div.dataset.time = lyric.time;
             this.elements.lyricsContainer.appendChild(div);
+        });
+
+        // 하단 여백 (마지막 가사가 중앙에 올 수 있도록)
+        const bottomSpacer = document.createElement('div');
+        bottomSpacer.className = 'lyrics-spacer';
+        this.elements.lyricsContainer.appendChild(bottomSpacer);
+
+        // 스페이서 높이를 컨테이너 높이의 절반으로 설정
+        requestAnimationFrame(() => {
+            const containerHeight = this.elements.lyricsContainer.clientHeight;
+            const spacerHeight = containerHeight / 2;
+            topSpacer.style.height = `${spacerHeight}px`;
+            bottomSpacer.style.height = `${spacerHeight}px`;
         });
     }
 
@@ -407,9 +484,12 @@ class VerseVibe {
 
         let activeIndex = -1;
 
+        // syncAdjust 적용한 보정 시간
+        const adjustedOffset = this.currentOffset + this.syncAdjust;
+
         // 현재 시간에 해당하는 가사 찾기
         for (let i = 0; i < this.lyrics.length; i++) {
-            if (this.lyrics[i].time <= this.currentOffset) {
+            if (this.lyrics[i].time <= adjustedOffset) {
                 activeIndex = i;
             } else {
                 break;
@@ -567,6 +647,8 @@ class VerseVibe {
         this.lyrics = [];
         this.currentOffset = 0;
         this.audioChunks = [];
+        this.syncAdjust = 0;
+        this._lastRecordedSongKey = null;
 
         this.showScreen('initial');
     }
@@ -575,6 +657,117 @@ class VerseVibe {
         this.elements.errorMessage.textContent = message;
         this.stopRecognition();
         this.showScreen('error');
+    }
+
+    // --- 인식 기록 (History) ---
+
+    loadHistory() {
+        try {
+            const raw = localStorage.getItem('versevibe_history');
+            if (!raw) return { version: 1, songs: {} };
+            const data = JSON.parse(raw);
+            if (data && data.songs) return data;
+            return { version: 1, songs: {} };
+        } catch (e) {
+            console.error('히스토리 로드 실패:', e);
+            return { version: 1, songs: {} };
+        }
+    }
+
+    saveHistory(data) {
+        try {
+            localStorage.setItem('versevibe_history', JSON.stringify(data));
+        } catch (e) {
+            console.error('히스토리 저장 실패:', e);
+        }
+    }
+
+    recordSong(title, artist) {
+        const songKey = `${title}|${artist}`;
+
+        // 같은 세션 내 중복 카운트 방지
+        if (this._lastRecordedSongKey === songKey) return;
+        this._lastRecordedSongKey = songKey;
+
+        const data = this.loadHistory();
+        if (data.songs[songKey]) {
+            data.songs[songKey].playCount++;
+            data.songs[songKey].lastHeard = Date.now();
+        } else {
+            data.songs[songKey] = {
+                title: title,
+                artist: artist,
+                playCount: 1,
+                lastHeard: Date.now()
+            };
+        }
+        this.saveHistory(data);
+    }
+
+    showHistory() {
+        this.renderHistory();
+        this.showScreen('history');
+    }
+
+    renderHistory() {
+        const data = this.loadHistory();
+        const songs = Object.values(data.songs);
+
+        // lastHeard 내림차순 정렬
+        songs.sort((a, b) => b.lastHeard - a.lastHeard);
+
+        this.elements.historyList.innerHTML = '';
+
+        if (songs.length === 0) {
+            this.elements.historyList.style.display = 'none';
+            this.elements.historyEmpty.style.display = 'flex';
+            this.elements.historyClearBtn.style.display = 'none';
+            return;
+        }
+
+        this.elements.historyList.style.display = 'flex';
+        this.elements.historyEmpty.style.display = 'none';
+        this.elements.historyClearBtn.style.display = '';
+
+        songs.forEach(song => {
+            const item = document.createElement('div');
+            item.className = 'history-item';
+            item.innerHTML = `
+                <span class="history-item-icon">🎵</span>
+                <div class="history-item-info">
+                    <div class="history-item-title">${this.escapeHtml(song.title)}</div>
+                    <div class="history-item-artist">${this.escapeHtml(song.artist)}</div>
+                    <div class="history-item-time">${this.formatRelativeTime(song.lastHeard)}</div>
+                </div>
+                <span class="history-item-count">${song.playCount}회</span>
+            `;
+            this.elements.historyList.appendChild(item);
+        });
+    }
+
+    clearHistory() {
+        if (!confirm('인식 기록을 모두 삭제하시겠습니까?')) return;
+        localStorage.removeItem('versevibe_history');
+        this.renderHistory();
+    }
+
+    formatRelativeTime(ts) {
+        const diff = Date.now() - ts;
+        const seconds = Math.floor(diff / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+
+        if (seconds < 60) return '방금 전';
+        if (minutes < 60) return `${minutes}분 전`;
+        if (hours < 24) return `${hours}시간 전`;
+        return `${days}일 전`;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 }
 

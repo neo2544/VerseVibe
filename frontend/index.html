@@ -31,6 +31,7 @@
                 </div>
             </div>
             <button id="start-btn" class="btn primary">🎤 인식 시작</button>
+            <button id="history-btn" class="btn secondary" style="margin-top: 12px;">📋 인식 기록</button>
         </div>
 
         <!-- 인식 중 화면 -->
@@ -67,16 +68,16 @@
             <div class="lyrics-container" id="lyrics-container">
                 <!-- 가사가 여기에 표시됩니다 -->
             </div>
-            <div class="lyrics-whisper-toggle">
-                <label class="toggle-switch small">
-                    <input type="checkbox" id="whisper-toggle-lyrics">
-                    <span class="toggle-slider"></span>
-                </label>
-                <span class="toggle-title-small" id="whisper-toggle-lyrics-label">Whisper OFF</span>
-            </div>
-            <div class="controls">
-                <button id="stop-btn" class="btn secondary">중지</button>
-                <button id="retry-btn" class="btn primary">다른 곡 찾기</button>
+            <div class="sync-indicator" id="sync-indicator"></div>
+            <div class="lyrics-bottom-bar">
+                <div class="sync-controls">
+                    <button id="sync-minus-btn" class="sync-btn" title="싱크 -0.5초">-0.5s</button>
+                    <button id="sync-plus-btn" class="sync-btn" title="싱크 +0.5초">+0.5s</button>
+                </div>
+                <div class="controls">
+                    <button id="stop-btn" class="btn secondary btn-sm">중지</button>
+                    <button id="retry-btn" class="btn primary btn-sm">다른 곡</button>
+                </div>
             </div>
         </div>
 
@@ -85,6 +86,19 @@
             <div class="error-icon">😕</div>
             <p class="error-message" id="error-message">인식할 수 없습니다</p>
             <button id="retry-error-btn" class="btn primary">다시 시도</button>
+        </div>
+
+        <!-- 인식 기록 화면 -->
+        <div id="history-screen" class="screen">
+            <div class="history-header">
+                <h2>인식 기록</h2>
+                <button id="history-back-btn" class="btn secondary btn-sm">돌아가기</button>
+            </div>
+            <div class="history-list" id="history-list"></div>
+            <p class="history-empty" id="history-empty" style="display: none;">아직 인식한 곡이 없습니다</p>
+            <div class="history-footer">
+                <button id="history-clear-btn" class="btn btn-danger btn-sm">기록 삭제</button>
+            </div>
         </div>
     </div>
 
