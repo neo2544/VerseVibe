@@ -1,0 +1,584 @@
+/**
+ * VerseVibe - 실시간 싱크 가사 앱
+ */
+
+class VerseVibe {
+    constructor() {
+        // 상태
+        this.ws = null;
+        this.mediaRecorder = null;
+        this.audioChunks = [];
+        this.isRecording = false;
+        this.lyrics = [];
+        this.currentOffset = 0;
+        this.offsetTimer = null;
+        this.recordingInterval = null;
+        this.attemptCount = 0;
+        this.whisperEnabled = false;
+
+        // 오디오 시각화
+        this.audioContext = null;
+        this.analyser = null;
+        this.animationId = null;
+
+        // DOM 요소
+        this.screens = {
+            initial: document.getElementById('initial-screen'),
+            listening: document.getElementById('listening-screen'),
+            lyrics: document.getElementById('lyrics-screen'),
+            error: document.getElementById('error-screen')
+        };
+
+        this.elements = {
+            startBtn: document.getElementById('start-btn'),
+            cancelBtn: document.getElementById('cancel-btn'),
+            stopBtn: document.getElementById('stop-btn'),
+            retryBtn: document.getElementById('retry-btn'),
+            retryErrorBtn: document.getElementById('retry-error-btn'),
+            progressFill: document.getElementById('progress-fill'),
+            songTitle: document.getElementById('song-title'),
+            songArtist: document.getElementById('song-artist'),
+            lyricsContainer: document.getElementById('lyrics-container'),
+            errorMessage: document.getElementById('error-message'),
+            listeningStatus: document.getElementById('listening-status'),
+            attemptCount: document.getElementById('attempt-count'),
+            waveform: document.getElementById('waveform'),
+            whisperInfo: document.getElementById('whisper-info'),
+            whisperStatus: document.getElementById('whisper-status'),
+            whisperTranscription: document.getElementById('whisper-transcription'),
+            whisperText: document.getElementById('whisper-text'),
+            whisperToggle: document.getElementById('whisper-toggle'),
+            whisperToggleDesc: document.getElementById('whisper-toggle-desc'),
+            whisperToggleLyrics: document.getElementById('whisper-toggle-lyrics'),
+            whisperToggleLyricsLabel: document.getElementById('whisper-toggle-lyrics-label'),
+            whisperModeBadge: document.getElementById('whisper-mode-badge')
+        };
+
+        this.init();
+    }
+
+    init() {
+        // 이벤트 리스너 등록
+        this.elements.startBtn.addEventListener('click', () => this.startRecognition());
+        this.elements.cancelBtn.addEventListener('click', () => this.stopRecognition());
+        this.elements.stopBtn.addEventListener('click', () => this.stopRecognition());
+        this.elements.retryBtn.addEventListener('click', () => this.startRecognition());
+        this.elements.retryErrorBtn.addEventListener('click', () => this.startRecognition());
+
+        // Whisper 토글 이벤트
+        this.elements.whisperToggle.addEventListener('change', (e) => {
+            this.setWhisperEnabled(e.target.checked);
+        });
+        this.elements.whisperToggleLyrics.addEventListener('change', (e) => {
+            this.setWhisperEnabled(e.target.checked);
+        });
+    }
+
+    setWhisperEnabled(enabled) {
+        this.whisperEnabled = enabled;
+
+        // 초기 화면 토글 동기화
+        this.elements.whisperToggle.checked = enabled;
+        this.elements.whisperToggleDesc.textContent = enabled
+            ? 'ON - Shazam + Whisper 폴백 (넓은 커버리지)'
+            : 'OFF - Shazam만 사용 (빠름)';
+
+        // 가사 화면 토글 동기화
+        this.elements.whisperToggleLyrics.checked = enabled;
+        this.elements.whisperToggleLyricsLabel.textContent = enabled
+            ? 'Whisper ON'
+            : 'Whisper OFF';
+
+        // 인식 중 화면 배지
+        if (this.elements.whisperModeBadge) {
+            this.elements.whisperModeBadge.style.display = enabled ? 'inline-flex' : 'none';
+        }
+
+        // 녹음 중이면 다음 사이클부터 반영
+        if (this.isRecording) {
+            this.recordingDuration = enabled ? 10000 : 5000;
+        }
+    }
+
+    showScreen(screenName) {
+        Object.values(this.screens).forEach(screen => {
+            screen.classList.remove('active');
+        });
+        this.screens[screenName].classList.add('active');
+    }
+
+    async startRecognition() {
+        try {
+            // 상태 초기화
+            this.attemptCount = 0;
+            if (this.elements.attemptCount) {
+                this.elements.attemptCount.textContent = '';
+            }
+            if (this.elements.listeningStatus) {
+                this.elements.listeningStatus.textContent = '듣는 중...';
+            }
+            this.resetWhisperInfo();
+
+            // 마이크 권한 요청
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+            // WebSocket 연결
+            this.connectWebSocket();
+
+            // 녹음 시작
+            this.startRecording(stream);
+
+            this.showScreen('listening');
+        } catch (error) {
+            console.error('마이크 접근 실패:', error);
+            this.showError('마이크 접근 권한이 필요합니다.');
+        }
+    }
+
+    connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+        this.ws = new WebSocket(wsUrl);
+
+        this.ws.onopen = () => {
+            console.log('WebSocket 연결됨');
+        };
+
+        this.ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            this.handleServerMessage(data);
+        };
+
+        this.ws.onerror = (error) => {
+            console.error('WebSocket 오류:', error);
+            this.showError('서버 연결 오류가 발생했습니다.');
+        };
+
+        this.ws.onclose = () => {
+            console.log('WebSocket 연결 종료');
+        };
+    }
+
+    startRecording(stream) {
+        this.isRecording = true;
+        this.audioChunks = [];
+        this.stream = stream;
+
+        // 오디오 시각화 설정
+        this.setupAudioVisualizer(stream);
+
+        // MediaRecorder 설정
+        this.mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(this.mimeType)) {
+            this.mimeType = 'audio/webm';
+        }
+
+        // 녹음 사이클 시작 (Whisper OFF: 5초, ON: 10초)
+        this.recordingDuration = this.whisperEnabled ? 10000 : 5000;
+        this.startRecordingCycle();
+    }
+
+    startRecordingCycle() {
+        if (!this.isRecording) return;
+
+        this.audioChunks = [];
+
+        this.mediaRecorder = new MediaRecorder(this.stream, { mimeType: this.mimeType });
+
+        this.mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                this.audioChunks.push(event.data);
+            }
+        };
+
+        // stop() 호출 시: ondataavailable(마지막 데이터) → onstop 순서 보장
+        this.mediaRecorder.onstop = () => {
+            this.sendAudioChunk();
+            if (this.isRecording) {
+                this.startRecordingCycle();
+            }
+        };
+
+        // 인자 없이 start → stop 시 한 덩어리로 완전한 WebM 생성
+        this.mediaRecorder.start();
+
+        // 프로그레스 바
+        let progress = 0;
+        const recordingDuration = this.recordingDuration;
+
+        this.progressInterval = setInterval(() => {
+            progress += 100;
+            const percent = (progress / recordingDuration) * 100;
+            this.elements.progressFill.style.width = `${Math.min(percent, 100)}%`;
+        }, 100);
+
+        // 5초 후 녹음 중지 → onstop에서 전송 + 다음 사이클
+        this.recordingTimeout = setTimeout(() => {
+            clearInterval(this.progressInterval);
+            this.elements.progressFill.style.width = '0%';
+            if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+                this.mediaRecorder.stop();
+            }
+        }, recordingDuration);
+    }
+
+    async sendAudioChunk() {
+        if (this.audioChunks.length === 0) return;
+
+        // 완전한 WebM Blob 생성 (헤더 포함)
+        const audioBlob = new Blob(this.audioChunks, { type: this.mimeType });
+        this.audioChunks = [];
+        console.log(`오디오 전송: ${audioBlob.size} bytes`);
+
+        // Base64로 인코딩
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const base64data = reader.result.split(',')[1];
+
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({
+                    type: 'audio',
+                    data: base64data,
+                    whisper_enabled: this.whisperEnabled
+                }));
+            }
+        };
+        reader.readAsDataURL(audioBlob);
+    }
+
+    handleServerMessage(data) {
+        console.log('서버 메시지:', data.type, data);
+
+        switch (data.type) {
+            case 'recognized':
+                this.handleRecognized(data);
+                break;
+            case 'position':
+                this.handlePositionUpdate(data);
+                break;
+            case 'retrying':
+                // 재시도 중 - 상태 메시지 업데이트
+                this.updateListeningStatus(data.message);
+                break;
+            case 'whisper_status':
+                this.handleWhisperStatus(data);
+                break;
+            case 'whisper_transcription':
+                this.handleWhisperTranscription(data);
+                break;
+            case 'error':
+                // 가사가 이미 표시된 상태면 에러 무시
+                if (this.lyrics.length > 0) {
+                    console.log('에러 무시 (가사 표시 중):', data.message);
+                } else {
+                    this.showError(data.message);
+                }
+                break;
+            case 'stopped':
+                this.showScreen('initial');
+                break;
+        }
+    }
+
+    updateListeningStatus(message) {
+        // 듣기 화면의 상태 메시지 업데이트
+        this.attemptCount++;
+
+        if (this.elements.listeningStatus) {
+            this.elements.listeningStatus.textContent = message;
+        }
+        if (this.elements.attemptCount) {
+            this.elements.attemptCount.textContent = `시도 ${this.attemptCount}회`;
+        }
+    }
+
+    handleWhisperStatus(data) {
+        console.log('Whisper 상태:', data.status, data.message);
+
+        // Whisper 정보 영역 표시
+        this.elements.whisperInfo.style.display = 'block';
+        this.elements.whisperStatus.textContent = data.message;
+
+        // 상태별 스타일 적용
+        this.elements.whisperStatus.className = 'whisper-status';
+        if (data.status === 'loading') {
+            this.elements.whisperStatus.classList.add('loading');
+        } else if (data.status === 'loaded') {
+            this.elements.whisperStatus.classList.add('loaded');
+        } else if (data.status === 'processing') {
+            this.elements.whisperStatus.classList.add('processing');
+        }
+
+        // 듣기 화면 상태도 업데이트
+        if (this.elements.listeningStatus) {
+            this.elements.listeningStatus.textContent = data.message;
+        }
+    }
+
+    handleWhisperTranscription(data) {
+        console.log('Whisper 인식 텍스트:', data.text);
+
+        // Whisper 인식 텍스트 표시
+        this.elements.whisperInfo.style.display = 'block';
+        this.elements.whisperTranscription.style.display = 'block';
+        this.elements.whisperText.textContent = data.text;
+    }
+
+    resetWhisperInfo() {
+        if (this.elements.whisperInfo) {
+            this.elements.whisperInfo.style.display = 'none';
+        }
+        if (this.elements.whisperTranscription) {
+            this.elements.whisperTranscription.style.display = 'none';
+        }
+        if (this.elements.whisperText) {
+            this.elements.whisperText.textContent = '';
+        }
+        if (this.elements.whisperStatus) {
+            this.elements.whisperStatus.textContent = '';
+        }
+    }
+
+    handleRecognized(data) {
+        console.log(`새 곡 인식: ${data.title} - ${data.artist} (offset: ${data.offset})`);
+
+        // 곡 정보 표시
+        this.elements.songTitle.textContent = data.title;
+        this.elements.songArtist.textContent = data.artist;
+
+        // 가사 저장 및 표시
+        this.lyrics = data.lyrics || [];
+        this.renderLyrics();
+
+        // 현재 위치 설정
+        this.currentOffset = data.offset || 0;
+        this.startOffsetTimer();
+
+        // 곡 변경 시 애니메이션 효과
+        const songInfo = document.querySelector('.song-info');
+        if (songInfo) {
+            songInfo.classList.add('song-changed');
+            setTimeout(() => songInfo.classList.remove('song-changed'), 500);
+        }
+
+        this.showScreen('lyrics');
+    }
+
+    handlePositionUpdate(data) {
+        // 서버에서 받은 위치로 보정
+        this.currentOffset = data.offset;
+        this.updateCurrentLyric();
+    }
+
+    renderLyrics() {
+        this.elements.lyricsContainer.innerHTML = '';
+
+        if (this.lyrics.length === 0) {
+            this.elements.lyricsContainer.innerHTML = '<p class="lyric-line">가사를 찾을 수 없습니다</p>';
+            return;
+        }
+
+        this.lyrics.forEach((lyric, index) => {
+            const div = document.createElement('div');
+            div.className = 'lyric-line';
+            div.textContent = lyric.text;
+            div.dataset.index = index;
+            div.dataset.time = lyric.time;
+            this.elements.lyricsContainer.appendChild(div);
+        });
+    }
+
+    startOffsetTimer() {
+        // 기존 타이머 정리
+        if (this.offsetTimer) {
+            clearInterval(this.offsetTimer);
+        }
+
+        // 100ms마다 offset 증가 및 가사 업데이트
+        this.offsetTimer = setInterval(() => {
+            this.currentOffset += 0.1;
+            this.updateCurrentLyric();
+        }, 100);
+    }
+
+    updateCurrentLyric() {
+        const lines = this.elements.lyricsContainer.querySelectorAll('.lyric-line');
+
+        let activeIndex = -1;
+
+        // 현재 시간에 해당하는 가사 찾기
+        for (let i = 0; i < this.lyrics.length; i++) {
+            if (this.lyrics[i].time <= this.currentOffset) {
+                activeIndex = i;
+            } else {
+                break;
+            }
+        }
+
+        // 스타일 업데이트
+        lines.forEach((line, index) => {
+            line.classList.remove('active', 'past');
+
+            if (index === activeIndex) {
+                line.classList.add('active');
+                // 활성 가사로 스크롤
+                this.scrollToLine(line);
+            } else if (index < activeIndex) {
+                line.classList.add('past');
+            }
+        });
+    }
+
+    scrollToLine(element) {
+        const container = this.elements.lyricsContainer;
+        const containerHeight = container.clientHeight;
+        const elementTop = element.offsetTop;
+        const elementHeight = element.clientHeight;
+
+        // 가사를 컨테이너 중앙에 위치
+        const scrollPosition = elementTop - (containerHeight / 2) + (elementHeight / 2);
+
+        container.scrollTo({
+            top: scrollPosition,
+            behavior: 'smooth'
+        });
+    }
+
+    setupAudioVisualizer(stream) {
+        // AudioContext 생성
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        this.analyser = this.audioContext.createAnalyser();
+
+        // 마이크 입력을 분석기에 연결
+        const source = this.audioContext.createMediaStreamSource(stream);
+        source.connect(this.analyser);
+
+        // 분석기 설정
+        this.analyser.fftSize = 256;
+
+        // 시각화 시작
+        this.drawWaveform();
+    }
+
+    drawWaveform() {
+        if (!this.isRecording || !this.analyser) return;
+
+        this.animationId = requestAnimationFrame(() => this.drawWaveform());
+
+        const canvas = this.elements.waveform;
+        const ctx = canvas.getContext('2d');
+        const bufferLength = this.analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        this.analyser.getByteFrequencyData(dataArray);
+
+        // 캔버스 크기 조정 (고해상도 지원)
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+
+        const width = rect.width;
+        const height = rect.height;
+
+        // 배경 클리어
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, width, height);
+
+        // 바 그리기
+        const barCount = 40;
+        const barWidth = (width / barCount) * 0.7;
+        const gap = (width / barCount) * 0.3;
+        const step = Math.floor(bufferLength / barCount);
+
+        for (let i = 0; i < barCount; i++) {
+            // 주파수 데이터에서 샘플링
+            let sum = 0;
+            for (let j = 0; j < step; j++) {
+                sum += dataArray[i * step + j];
+            }
+            const average = sum / step;
+
+            // 바 높이 계산 (최소 높이 보장)
+            const barHeight = Math.max(3, (average / 255) * height * 0.8);
+
+            // 그라데이션 색상
+            const hue = 260 + (i / barCount) * 60; // 보라색 -> 청록색
+            ctx.fillStyle = `hsl(${hue}, 70%, 60%)`;
+
+            // 중앙 정렬로 바 그리기
+            const x = i * (barWidth + gap) + gap / 2;
+            const y = (height - barHeight) / 2;
+
+            ctx.beginPath();
+            ctx.roundRect(x, y, barWidth, barHeight, 2);
+            ctx.fill();
+        }
+    }
+
+    stopAudioVisualizer() {
+        if (this.animationId) {
+            cancelAnimationFrame(this.animationId);
+            this.animationId = null;
+        }
+        if (this.audioContext) {
+            this.audioContext.close();
+            this.audioContext = null;
+        }
+        this.analyser = null;
+    }
+
+    stopRecognition() {
+        this.isRecording = false;
+
+        // 오디오 시각화 중지
+        this.stopAudioVisualizer();
+
+        // 녹음 중지
+        if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+            this.mediaRecorder.onstop = null; // 다음 사이클 방지
+            this.mediaRecorder.stop();
+        }
+        if (this.stream) {
+            this.stream.getTracks().forEach(track => track.stop());
+            this.stream = null;
+        }
+
+        // 타이머 정리
+        if (this.recordingTimeout) {
+            clearTimeout(this.recordingTimeout);
+        }
+        if (this.progressInterval) {
+            clearInterval(this.progressInterval);
+        }
+        if (this.offsetTimer) {
+            clearInterval(this.offsetTimer);
+        }
+
+        // WebSocket 종료
+        if (this.ws) {
+            this.ws.send(JSON.stringify({ type: 'stop' }));
+            this.ws.close();
+        }
+
+        // 상태 초기화
+        this.lyrics = [];
+        this.currentOffset = 0;
+        this.audioChunks = [];
+
+        this.showScreen('initial');
+    }
+
+    showError(message) {
+        this.elements.errorMessage.textContent = message;
+        this.stopRecognition();
+        this.showScreen('error');
+    }
+}
+
+// 앱 시작
+document.addEventListener('DOMContentLoaded', () => {
+    window.app = new VerseVibe();
+});

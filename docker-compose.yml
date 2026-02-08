@@ -1,0 +1,9 @@
+services:
+  versevibe:
+    build: .
+    container_name: versevibe
+    ports:
+      - "50260:8000"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1

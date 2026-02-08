@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VerseVibe - 실시간 싱크 가사</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 헤더 -->
+        <header class="header">
+            <h1>VerseVibe</h1>
+            <p class="subtitle">실시간 싱크 가사</p>
+        </header>
+
+        <!-- 초기 화면 -->
+        <div id="initial-screen" class="screen active">
+            <div class="icon-container">
+                <div class="music-icon">🎵</div>
+            </div>
+            <p class="instruction">음악을 들려주세요</p>
+            <div class="whisper-toggle-container">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="whisper-toggle">
+                    <span class="toggle-slider"></span>
+                </label>
+                <div class="toggle-label">
+                    <span class="toggle-title">Whisper 음성인식</span>
+                    <span class="toggle-desc" id="whisper-toggle-desc">OFF - Shazam만 사용 (빠름)</span>
+                </div>
+            </div>
+            <button id="start-btn" class="btn primary">🎤 인식 시작</button>
+        </div>
+
+        <!-- 인식 중 화면 -->
+        <div id="listening-screen" class="screen">
+            <div class="waveform-container">
+                <canvas id="waveform" width="300" height="100"></canvas>
+            </div>
+            <p class="status" id="listening-status">듣는 중...</p>
+            <p class="attempt-count" id="attempt-count"></p>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <!-- Whisper 상태 표시 -->
+            <div id="whisper-info" class="whisper-info" style="display: none;">
+                <div id="whisper-status" class="whisper-status"></div>
+                <div id="whisper-transcription" class="whisper-transcription" style="display: none;">
+                    <span class="whisper-label">인식된 텍스트</span>
+                    <p id="whisper-text"></p>
+                </div>
+            </div>
+            <div id="whisper-mode-badge" class="whisper-mode-badge" style="display: none;">
+                <span class="badge-dot"></span> Whisper ON
+            </div>
+            <button id="cancel-btn" class="btn secondary">취소</button>
+        </div>
+
+        <!-- 가사 화면 -->
+        <div id="lyrics-screen" class="screen">
+            <div class="song-info">
+                <span class="live-badge">🔴 LIVE</span>
+                <h2 id="song-title">-</h2>
+                <p id="song-artist">-</p>
+            </div>
+            <div class="lyrics-container" id="lyrics-container">
+                <!-- 가사가 여기에 표시됩니다 -->
+            </div>
+            <div class="lyrics-whisper-toggle">
+                <label class="toggle-switch small">
+                    <input type="checkbox" id="whisper-toggle-lyrics">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="toggle-title-small" id="whisper-toggle-lyrics-label">Whisper OFF</span>
+            </div>
+            <div class="controls">
+                <button id="stop-btn" class="btn secondary">중지</button>
+                <button id="retry-btn" class="btn primary">다른 곡 찾기</button>
+            </div>
+        </div>
+
+        <!-- 에러 화면 -->
+        <div id="error-screen" class="screen">
+            <div class="error-icon">😕</div>
+            <p class="error-message" id="error-message">인식할 수 없습니다</p>
+            <button id="retry-error-btn" class="btn primary">다시 시도</button>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
