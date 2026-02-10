@@ -77,6 +77,7 @@ class VerseVibe {
             lockBtn: document.getElementById('lock-btn'),
             scrollToCurrentBtn: document.getElementById('scroll-to-current-btn'),
             pauseBtn: document.getElementById('pause-btn'),
+            youtubeLink: document.getElementById('youtube-link'),
             songProgressBar: document.getElementById('song-progress-bar'),
             songProgressFill: document.getElementById('song-progress-fill'),
             songCandidateToast: document.getElementById('song-candidate-toast'),
@@ -462,6 +463,11 @@ class VerseVibe {
             // 곡 정보 표시
             this.elements.songTitle.textContent = data.title;
             this.elements.songArtist.textContent = data.artist;
+
+            // YouTube 검색 링크
+            const query = encodeURIComponent(`${data.title} ${data.artist}`);
+            this.elements.youtubeLink.href = `https://www.youtube.com/results?search_query=${query}`;
+            this.elements.youtubeLink.style.display = 'inline-flex';
 
             // 가사 저장 및 표시
             this.lyrics = data.lyrics || [];
@@ -1001,6 +1007,11 @@ class VerseVibe {
             // 가사 화면에 표시 (싱크 없이 정적으로)
             this.elements.songTitle.textContent = data.title;
             this.elements.songArtist.textContent = data.artist;
+
+            // YouTube 검색 링크
+            const query = encodeURIComponent(`${data.title} ${data.artist}`);
+            this.elements.youtubeLink.href = `https://www.youtube.com/results?search_query=${query}`;
+            this.elements.youtubeLink.style.display = 'inline-flex';
             this.elements.pauseBtn.textContent = '📖 가사';
             this.elements.pauseBtn.classList.add('paused');
 

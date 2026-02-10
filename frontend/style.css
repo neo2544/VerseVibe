@@ -42,12 +42,12 @@ body {
 /* Header */
 .header {
     text-align: center;
-    padding: 8px 0;
+    padding: 4px 0;
     flex-shrink: 0;
 }
 
 .header h1 {
-    font-size: 2rem;
+    font-size: 1.2rem;
     font-weight: 700;
     background: linear-gradient(135deg, var(--primary), var(--accent));
     -webkit-background-clip: text;
@@ -57,8 +57,8 @@ body {
 
 .subtitle {
     color: var(--text-dim);
-    font-size: 0.9rem;
-    margin-top: 5px;
+    font-size: 0.7rem;
+    margin-top: 2px;
 }
 
 /* Screens */
@@ -445,6 +445,27 @@ body {
 #song-artist {
     color: var(--text-dim);
     font-size: 0.9rem;
+}
+
+.youtube-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 6px;
+    color: #ff0000;
+    opacity: 0.7;
+    transition: opacity 0.2s, transform 0.2s;
+}
+
+.youtube-link:hover,
+.youtube-link:active {
+    opacity: 1;
+    transform: scale(1.15);
+}
+
+.youtube-icon {
+    width: 28px;
+    height: 28px;
 }
 
 /* 곡 변경 애니메이션 */
