@@ -33,12 +33,10 @@ def parse_lrc(lrc_text: str) -> List[Dict]:
             time_seconds = minutes * 60 + seconds + ms / 1000
             text = match.group(4).strip()
 
-            # 빈 가사는 건너뛰기
-            if text:
-                lyrics.append({
-                    "time": round(time_seconds, 2),
-                    "text": text
-                })
+            lyrics.append({
+                "time": round(time_seconds, 2),
+                "text": text if text else "♪"
+            })
 
     # 시간순 정렬
     lyrics.sort(key=lambda x: x["time"])

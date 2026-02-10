@@ -61,12 +61,22 @@
         <!-- 가사 화면 -->
         <div id="lyrics-screen" class="screen">
             <div class="song-info">
-                <span class="live-badge">🔴 LIVE</span>
+                <button class="live-badge" id="pause-btn" title="인식 일시정지/재개">🔴 LIVE</button>
                 <h2 id="song-title">-</h2>
                 <p id="song-artist">-</p>
             </div>
-            <div class="lyrics-container" id="lyrics-container">
-                <!-- 가사가 여기에 표시됩니다 -->
+            <div class="lyrics-scroll-wrapper">
+                <div class="lyrics-container" id="lyrics-container">
+                    <!-- 가사가 여기에 표시됩니다 -->
+                </div>
+                <button class="scroll-to-current-btn" id="scroll-to-current-btn">현재 가사로 ↓</button>
+            </div>
+            <!-- 곡 전환 감지 토스트 -->
+            <div class="song-candidate-toast" id="song-candidate-toast">
+                <span class="toast-text" id="toast-text"></span>
+            </div>
+            <div class="song-progress-bar" id="song-progress-bar">
+                <div class="song-progress-fill" id="song-progress-fill"></div>
             </div>
             <div class="sync-indicator" id="sync-indicator"></div>
             <div class="lyrics-bottom-bar">
@@ -75,6 +85,7 @@
                     <button id="sync-plus-btn" class="sync-btn" title="싱크 +0.5초">+0.5s</button>
                 </div>
                 <div class="controls">
+                    <button id="lock-btn" class="sync-btn" title="곡 고정">🔓</button>
                     <button id="stop-btn" class="btn secondary btn-sm">중지</button>
                     <button id="retry-btn" class="btn primary btn-sm">다른 곡</button>
                 </div>

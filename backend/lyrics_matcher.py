@@ -36,7 +36,7 @@ def transcribe_audio(audio_path: str) -> str:
     """오디오 파일을 텍스트로 변환"""
     global _last_transcription
     model = get_whisper_model()
-    result = model.transcribe(audio_path, language="ko")
+    result = model.transcribe(audio_path)
     _last_transcription = result["text"].strip()
     return _last_transcription
 
@@ -154,6 +154,48 @@ def match_lyrics_from_artist_songs(transcribed: str, artist: str) -> Optional[Di
     return None
 
 
+def estimate_offset_from_lyrics(transcribed: str, synced_lyrics: str) -> float:
+    """인식된 텍스트를 싱크 가사와 비교하여 대략적 offset(초) 추정"""
+    if not synced_lyrics or not transcribed:
+        return 0.0
+
+    import re
+    from lrc_parser import parse_lrc
+
+    parsed = parse_lrc(synced_lyrics)
+    if not parsed:
+        return 0.0
+
+    transcribed_clean = re.sub(r'[^\w가-힣a-zA-Z]', '', transcribed.lower())
+    if len(transcribed_clean) < 3:
+        return 0.0
+
+    best_score = 0.0
+    best_time = 0.0
+
+    # 슬라이딩 윈도우: 연속 3~5줄 단위로 인식 텍스트와 비교
+    for window_size in range(3, min(6, len(parsed) + 1)):
+        for i in range(len(parsed) - window_size + 1):
+            window_lines = parsed[i:i + window_size]
+            window_text = ''.join(re.sub(r'[^\w가-힣a-zA-Z]', '', line["text"].lower()) for line in window_lines)
+
+            if not window_text:
+                continue
+
+            score = SequenceMatcher(None, transcribed_clean, window_text).ratio()
+
+            if score > best_score:
+                best_score = score
+                # 윈도우의 시작 시간을 offset으로 사용
+                best_time = window_lines[0]["time"]
+
+    if best_score >= 0.3:
+        print(f"📍 Whisper offset 추정: {best_time:.1f}초 (유사도: {best_score:.0%})")
+        return best_time
+
+    return 0.0
+
+
 def calculate_similarity(text1: str, text2: str) -> float:
     """두 텍스트의 유사도 계산 (0~1)"""
     # 공백/특수문자 정규화
@@ -247,11 +289,16 @@ def recognize_by_lyrics(audio_data: bytes, known_artists: List[str] = None) -> O
                 best_overall_score = match["score"]
 
         if best_overall:
-            print(f"🎵 가사 매칭 성공: {best_overall['title']} - {best_overall['artist']} (유사도: {best_overall['score']:.0%})")
+            # 싱크 가사에서 offset 추정
+            offset = 0.0
+            if best_overall.get("syncedLyrics"):
+                offset = estimate_offset_from_lyrics(transcribed, best_overall["syncedLyrics"])
+
+            print(f"🎵 가사 매칭 성공: {best_overall['title']} - {best_overall['artist']} (유사도: {best_overall['score']:.0%}, offset: {offset:.1f}초)")
             return {
                 "title": best_overall["title"],
                 "artist": best_overall["artist"],
-                "offset": 0.0,  # 가사 매칭은 정확한 offset 알 수 없음
+                "offset": offset,
                 "method": "lyrics_match"
             }
 

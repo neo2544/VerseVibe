@@ -19,6 +19,21 @@ class VerseVibe {
         // 싱크 보정
         this.syncAdjust = 0; // 사용자 수동 보정값 (초)
 
+        // 곡 고정
+        this.songLocked = false;
+
+        // 자동 스크롤 제어
+        this.userScrolling = false;
+        this._userScrollTimeout = null;
+
+        // 인식 일시정지
+        this.paused = false;
+
+        // WebSocket 재연결
+        this.wsReconnectAttempts = 0;
+        this.wsMaxReconnectAttempts = 3;
+        this.wsReconnecting = false;
+
         // 오디오 시각화
         this.audioContext = null;
         this.analyser = null;
@@ -59,6 +74,13 @@ class VerseVibe {
             syncMinusBtn: document.getElementById('sync-minus-btn'),
             syncPlusBtn: document.getElementById('sync-plus-btn'),
             syncIndicator: document.getElementById('sync-indicator'),
+            lockBtn: document.getElementById('lock-btn'),
+            scrollToCurrentBtn: document.getElementById('scroll-to-current-btn'),
+            pauseBtn: document.getElementById('pause-btn'),
+            songProgressBar: document.getElementById('song-progress-bar'),
+            songProgressFill: document.getElementById('song-progress-fill'),
+            songCandidateToast: document.getElementById('song-candidate-toast'),
+            toastText: document.getElementById('toast-text'),
             historyBtn: document.getElementById('history-btn'),
             historyBackBtn: document.getElementById('history-back-btn'),
             historyClearBtn: document.getElementById('history-clear-btn'),
@@ -93,6 +115,20 @@ class VerseVibe {
         // 싱크 보정 버튼
         this.elements.syncMinusBtn.addEventListener('click', () => this.adjustSync(-0.5));
         this.elements.syncPlusBtn.addEventListener('click', () => this.adjustSync(0.5));
+
+        // 곡 고정 버튼
+        this.elements.lockBtn.addEventListener('click', () => this.toggleSongLock());
+
+        // 가사 스크롤 감지 — 사용자가 직접 스크롤하면 자동 스크롤 일시정지
+        this.elements.lyricsContainer.addEventListener('touchstart', () => this.onUserScroll(), { passive: true });
+        this.elements.lyricsContainer.addEventListener('mousedown', () => this.onUserScroll());
+        this.elements.lyricsContainer.addEventListener('wheel', () => this.onUserScroll(), { passive: true });
+
+        // "현재 가사로" 버튼
+        this.elements.scrollToCurrentBtn.addEventListener('click', () => this.resumeAutoScroll());
+
+        // 인식 일시정지/재개 버튼
+        this.elements.pauseBtn.addEventListener('click', () => this.togglePause());
 
         // 히스토리 버튼
         this.elements.historyBtn.addEventListener('click', () => this.showHistory());
@@ -173,6 +209,11 @@ class VerseVibe {
 
         this.ws.onopen = () => {
             console.log('WebSocket 연결됨');
+            if (this.wsReconnecting) {
+                this.wsReconnecting = false;
+                this.wsReconnectAttempts = 0;
+                this.showCandidateToast('서버 재연결 성공');
+            }
         };
 
         this.ws.onmessage = (event) => {
@@ -182,12 +223,35 @@ class VerseVibe {
 
         this.ws.onerror = (error) => {
             console.error('WebSocket 오류:', error);
-            this.showError('서버 연결 오류가 발생했습니다.');
         };
 
         this.ws.onclose = () => {
             console.log('WebSocket 연결 종료');
+            // 인식 중이었으면 재연결 시도
+            if (this.isRecording && !this.paused) {
+                this.attemptReconnect();
+            }
         };
+    }
+
+    attemptReconnect() {
+        if (this.wsReconnectAttempts >= this.wsMaxReconnectAttempts) {
+            this.showError('서버 연결이 끊어졌습니다. 다시 시도해주세요.');
+            return;
+        }
+
+        this.wsReconnecting = true;
+        this.wsReconnectAttempts++;
+        const delay = Math.pow(2, this.wsReconnectAttempts) * 1000; // 2s, 4s, 8s
+
+        console.log(`WebSocket 재연결 시도 ${this.wsReconnectAttempts}/${this.wsMaxReconnectAttempts} (${delay/1000}초 후)`);
+        this.showCandidateToast(`재연결 중... (${this.wsReconnectAttempts}/${this.wsMaxReconnectAttempts})`);
+
+        setTimeout(() => {
+            if (this.isRecording) {
+                this.connectWebSocket();
+            }
+        }, delay);
     }
 
     startRecording(stream) {
@@ -289,6 +353,9 @@ class VerseVibe {
             case 'position':
                 this.handlePositionUpdate(data);
                 break;
+            case 'song_candidate':
+                this.handleSongCandidate(data);
+                break;
             case 'retrying':
                 // 재시도 중 - 상태 메시지 업데이트
                 this.updateListeningStatus(data.message);
@@ -375,6 +442,8 @@ class VerseVibe {
     handleRecognized(data) {
         console.log(`새 곡 인식: ${data.title} - ${data.artist} (offset: ${data.offset})`);
 
+        const isNewSong = this.songRecognized && this.elements.songTitle.textContent !== data.title;
+
         // 인식 기록 저장
         this.recordSong(data.title, data.artist);
 
@@ -384,25 +453,50 @@ class VerseVibe {
             this.recordingDuration = 20000; // 인식 후 20초 간격으로 위치 보정
         }
 
-        // 곡 정보 표시
-        this.elements.songTitle.textContent = data.title;
-        this.elements.songArtist.textContent = data.artist;
+        // 싱크 보정값 리셋 (새 곡이면)
+        if (isNewSong) {
+            this.syncAdjust = 0;
+        }
 
-        // 가사 저장 및 표시
-        this.lyrics = data.lyrics || [];
-        this.renderLyrics();
+        const applyNewSong = () => {
+            // 곡 정보 표시
+            this.elements.songTitle.textContent = data.title;
+            this.elements.songArtist.textContent = data.artist;
 
-        // 현재 위치 설정 (녹음~결과수신 지연 보정)
-        const elapsed = this.cycleStartTime ? (Date.now() - this.cycleStartTime) / 1000 : 0;
-        this.currentOffset = (data.offset || 0) + elapsed;
-        console.log(`⏱️ 싱크 보정: offset ${data.offset?.toFixed(1)}s + 지연 ${elapsed.toFixed(1)}s = ${this.currentOffset.toFixed(1)}s`);
-        this.startOffsetTimer();
+            // 가사 저장 및 표시
+            this.lyrics = data.lyrics || [];
+            this.renderLyrics();
 
-        // 곡 변경 시 애니메이션 효과
-        const songInfo = document.querySelector('.song-info');
-        if (songInfo) {
-            songInfo.classList.add('song-changed');
-            setTimeout(() => songInfo.classList.remove('song-changed'), 500);
+            // 현재 위치 설정 (녹음~결과수신 지연 보정)
+            const elapsed = this.cycleStartTime ? (Date.now() - this.cycleStartTime) / 1000 : 0;
+            this.currentOffset = (data.offset || 0) + elapsed;
+            console.log(`⏱️ 싱크 보정: offset ${data.offset?.toFixed(1)}s + 지연 ${elapsed.toFixed(1)}s = ${this.currentOffset.toFixed(1)}s`);
+            this.startOffsetTimer();
+
+            // 곡 변경 시 애니메이션 효과
+            const songInfo = document.querySelector('.song-info');
+            if (songInfo) {
+                songInfo.classList.add('song-changed');
+                setTimeout(() => songInfo.classList.remove('song-changed'), 500);
+            }
+        };
+
+        if (isNewSong) {
+            // 곡 전환 토스트
+            this.showCandidateToast(`새로운 곡: ${data.title} - ${data.artist}`);
+
+            // fade-out → 데이터 교체 → fade-in
+            this.elements.lyricsContainer.classList.add('lyrics-fade-out');
+            setTimeout(() => {
+                applyNewSong();
+                this.elements.lyricsContainer.classList.remove('lyrics-fade-out');
+                this.elements.lyricsContainer.classList.add('lyrics-fade-in');
+                setTimeout(() => {
+                    this.elements.lyricsContainer.classList.remove('lyrics-fade-in');
+                }, 300);
+            }, 250);
+        } else {
+            applyNewSong();
         }
 
         this.showScreen('lyrics');
@@ -414,6 +508,82 @@ class VerseVibe {
         this.currentOffset = data.offset + elapsed;
         console.log(`⏱️ 위치 보정: offset ${data.offset.toFixed(1)}s + 지연 ${elapsed.toFixed(1)}s = ${this.currentOffset.toFixed(1)}s`);
         this.updateCurrentLyric();
+    }
+
+    togglePause() {
+        this.paused = !this.paused;
+
+        if (this.paused) {
+            // 마이크 녹음 중지 (타이머는 유지)
+            if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+                this.mediaRecorder.onstop = null; // 다음 사이클 방지
+                this.mediaRecorder.stop();
+            }
+            if (this.recordingTimeout) {
+                clearTimeout(this.recordingTimeout);
+            }
+            if (this.progressInterval) {
+                clearInterval(this.progressInterval);
+            }
+            if (this.stream) {
+                this.stream.getTracks().forEach(track => track.stop());
+            }
+
+            this.elements.pauseBtn.textContent = '⏸ PAUSED';
+            this.elements.pauseBtn.classList.add('paused');
+        } else {
+            // 녹음 재개
+            this.resumeRecording();
+            this.elements.pauseBtn.textContent = '🔴 LIVE';
+            this.elements.pauseBtn.classList.remove('paused');
+        }
+    }
+
+    async resumeRecording() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.stream = stream;
+            this.setupAudioVisualizer(stream);
+
+            this.mimeType = 'audio/webm;codecs=opus';
+            if (!MediaRecorder.isTypeSupported(this.mimeType)) {
+                this.mimeType = 'audio/webm';
+            }
+            this.startRecordingCycle();
+        } catch (error) {
+            console.error('마이크 재연결 실패:', error);
+        }
+    }
+
+    toggleSongLock() {
+        this.songLocked = !this.songLocked;
+        this.elements.lockBtn.textContent = this.songLocked ? '🔒' : '🔓';
+        this.elements.lockBtn.classList.toggle('lock-active', this.songLocked);
+
+        // 서버에 곡 고정 상태 전달
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({
+                type: 'lock_song',
+                locked: this.songLocked
+            }));
+        }
+    }
+
+    handleSongCandidate(data) {
+        console.log(`곡 전환 후보: ${data.title} - ${data.artist}`);
+        const msg = data.message ? `\n${data.message}` : '';
+        this.showCandidateToast(`${data.title} - ${data.artist}${msg}`);
+    }
+
+    showCandidateToast(text) {
+        const toast = this.elements.songCandidateToast;
+        this.elements.toastText.textContent = text;
+        toast.classList.add('show');
+
+        clearTimeout(this._toastTimeout);
+        this._toastTimeout = setTimeout(() => {
+            toast.classList.remove('show');
+        }, 3000);
     }
 
     adjustSync(delta) {
@@ -434,7 +604,12 @@ class VerseVibe {
         this.elements.lyricsContainer.innerHTML = '';
 
         if (this.lyrics.length === 0) {
-            this.elements.lyricsContainer.innerHTML = '<p class="lyric-line">가사를 찾을 수 없습니다</p>';
+            this.elements.lyricsContainer.innerHTML =
+                '<div class="no-lyrics-info">' +
+                '<p class="no-lyrics-icon">🎶</p>' +
+                '<p class="no-lyrics-text">싱크 가사를 찾을 수 없습니다</p>' +
+                '<p class="no-lyrics-sub">곡 정보만 표시됩니다</p>' +
+                '</div>';
             return;
         }
 
@@ -446,6 +621,9 @@ class VerseVibe {
         this.lyrics.forEach((lyric, index) => {
             const div = document.createElement('div');
             div.className = 'lyric-line';
+            if (lyric.text === '♪') {
+                div.classList.add('interlude');
+            }
             div.textContent = lyric.text;
             div.dataset.index = index;
             div.dataset.time = lyric.time;
@@ -508,9 +686,21 @@ class VerseVibe {
                 line.classList.add('past');
             }
         });
+
+        // 진행률 바 업데이트
+        if (this.lyrics.length > 0) {
+            const lastTime = this.lyrics[this.lyrics.length - 1].time;
+            if (lastTime > 0) {
+                const percent = Math.min((adjustedOffset / lastTime) * 100, 100);
+                this.elements.songProgressFill.style.width = `${Math.max(percent, 0)}%`;
+            }
+        }
     }
 
     scrollToLine(element) {
+        // 사용자가 스크롤 중이면 자동 스크롤 건너뛰기
+        if (this.userScrolling) return;
+
         const container = this.elements.lyricsContainer;
         const containerHeight = container.clientHeight;
         const elementTop = element.offsetTop;
@@ -523,6 +713,29 @@ class VerseVibe {
             top: scrollPosition,
             behavior: 'smooth'
         });
+    }
+
+    onUserScroll() {
+        this.userScrolling = true;
+        this.elements.scrollToCurrentBtn.classList.add('show');
+
+        // 5초 후 자동 스크롤 복귀
+        clearTimeout(this._userScrollTimeout);
+        this._userScrollTimeout = setTimeout(() => {
+            this.resumeAutoScroll();
+        }, 5000);
+    }
+
+    resumeAutoScroll() {
+        this.userScrolling = false;
+        this.elements.scrollToCurrentBtn.classList.remove('show');
+        clearTimeout(this._userScrollTimeout);
+
+        // 즉시 현재 가사로 스크롤
+        const activeLine = this.elements.lyricsContainer.querySelector('.lyric-line.active');
+        if (activeLine) {
+            this.scrollToLine(activeLine);
+        }
     }
 
     setupAudioVisualizer(stream) {
@@ -648,7 +861,26 @@ class VerseVibe {
         this.currentOffset = 0;
         this.audioChunks = [];
         this.syncAdjust = 0;
+        this.songLocked = false;
         this._lastRecordedSongKey = null;
+
+        // 곡 고정 버튼 시각 상태 리셋
+        this.elements.lockBtn.textContent = '🔓';
+        this.elements.lockBtn.classList.remove('lock-active');
+
+        // 자동 스크롤 상태 리셋
+        this.userScrolling = false;
+        this.elements.scrollToCurrentBtn.classList.remove('show');
+        clearTimeout(this._userScrollTimeout);
+
+        // 일시정지 상태 리셋
+        this.paused = false;
+        this.elements.pauseBtn.textContent = '🔴 LIVE';
+        this.elements.pauseBtn.classList.remove('paused');
+
+        // 재연결 상태 리셋
+        this.wsReconnectAttempts = 0;
+        this.wsReconnecting = false;
 
         this.showScreen('initial');
     }
@@ -740,9 +972,56 @@ class VerseVibe {
                     <div class="history-item-time">${this.formatRelativeTime(song.lastHeard)}</div>
                 </div>
                 <span class="history-item-count">${song.playCount}회</span>
+                <button class="history-item-delete" title="삭제">✕</button>
             `;
+
+            // 아이템 탭 → 가사 보기
+            item.querySelector('.history-item-info').addEventListener('click', () => {
+                this.viewHistoryLyrics(song.title, song.artist);
+            });
+
+            // 삭제 버튼
+            item.querySelector('.history-item-delete').addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.deleteHistoryItem(song.title, song.artist);
+            });
+
             this.elements.historyList.appendChild(item);
         });
+    }
+
+    async viewHistoryLyrics(title, artist) {
+        try {
+            const params = new URLSearchParams({ title, artist });
+            const response = await fetch(`/api/lyrics?${params}`);
+            if (!response.ok) throw new Error('가사 조회 실패');
+
+            const data = await response.json();
+
+            // 가사 화면에 표시 (싱크 없이 정적으로)
+            this.elements.songTitle.textContent = data.title;
+            this.elements.songArtist.textContent = data.artist;
+            this.elements.pauseBtn.textContent = '📖 가사';
+            this.elements.pauseBtn.classList.add('paused');
+
+            this.lyrics = data.lyrics || [];
+            this.renderLyrics();
+
+            // 진행률 바 숨김
+            this.elements.songProgressFill.style.width = '0%';
+
+            this.showScreen('lyrics');
+        } catch (error) {
+            console.error('가사 조회 실패:', error);
+        }
+    }
+
+    deleteHistoryItem(title, artist) {
+        const songKey = `${title}|${artist}`;
+        const data = this.loadHistory();
+        delete data.songs[songKey];
+        this.saveHistory(data);
+        this.renderHistory();
     }
 
     clearHistory() {

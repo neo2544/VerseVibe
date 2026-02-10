@@ -43,6 +43,7 @@ async def websocket_endpoint(websocket: WebSocket):
     lyrics_cache = []
     running = True
     whisper_enabled = False
+    song_locked = False  # 곡 고정 모드
 
     # 최신 오디오만 유지 (Event + 변수)
     latest_audio = None
@@ -50,7 +51,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def receive_loop():
         """오디오 수신 루프 - 항상 최신 오디오만 보관"""
-        nonlocal latest_audio, running, whisper_enabled
+        nonlocal latest_audio, running, whisper_enabled, song_locked
         try:
             while running:
                 data = await websocket.receive_text()
@@ -60,6 +61,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     latest_audio = base64.b64decode(message["data"])
                     whisper_enabled = message.get("whisper_enabled", False)
                     audio_ready.set()  # 처리 루프에 알림
+
+                elif message["type"] == "lock_song":
+                    song_locked = message.get("locked", False)
+                    print(f"🔒 곡 고정: {'ON' if song_locked else 'OFF'}")
 
                 elif message["type"] == "stop":
                     running = False
@@ -82,6 +87,10 @@ async def websocket_endpoint(websocket: WebSocket):
         consecutive_failures = 0
         last_shazam_time = 0.0
         MIN_SHAZAM_INTERVAL = 8.0  # Shazam 호출 간 최소 8초 간격
+
+        # 곡 전환 후보 (연속 2회 인식 시에만 전환)
+        candidate_song = None
+        candidate_count = 0
 
         while running:
             # 새 오디오가 올 때까지 대기
@@ -152,22 +161,79 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 song_key = f"{title}|{artist}"
                 if current_song != song_key:
-                    print(f"🎵 새 곡 감지: {title} - {artist}")
-                    current_song = song_key
-                    lyrics_cache = get_synced_lyrics(title, artist)
-                    print(f"   가사 {len(lyrics_cache)}줄 로드됨")
+                    # 아직 곡이 없으면 (최초 인식) 즉시 전환
+                    if current_song is None:
+                        print(f"🎵 최초 곡 감지: {title} - {artist}")
+                        current_song = song_key
+                        candidate_song = None
+                        candidate_count = 0
+                        lyrics_cache = get_synced_lyrics(title, artist)
+                        print(f"   가사 {len(lyrics_cache)}줄 로드됨")
 
-                    try:
-                        await websocket.send_json({
-                            "type": "recognized",
-                            "title": title,
-                            "artist": artist,
-                            "offset": offset,
-                            "lyrics": lyrics_cache
-                        })
-                    except Exception:
-                        break
+                        try:
+                            await websocket.send_json({
+                                "type": "recognized",
+                                "title": title,
+                                "artist": artist,
+                                "offset": offset,
+                                "lyrics": lyrics_cache
+                            })
+                        except Exception:
+                            break
+
+                    # 곡 고정 모드 → 전환 차단, 알림만
+                    elif song_locked:
+                        candidate_song = None
+                        candidate_count = 0
+                        print(f"🔒 곡 고정 중 - 다른 곡 무시: {title} - {artist}")
+                        try:
+                            await websocket.send_json({
+                                "type": "song_candidate",
+                                "title": title,
+                                "artist": artist,
+                                "message": "곡이 고정되어 전환하지 않았습니다"
+                            })
+                        except Exception:
+                            break
+
+                    # 후보 시스템: 연속 2회 동일 곡이어야 전환
+                    elif candidate_song == song_key:
+                        candidate_count += 1
+                        print(f"🎵 곡 전환 확정 (연속 {candidate_count}회): {title} - {artist}")
+                        current_song = song_key
+                        candidate_song = None
+                        candidate_count = 0
+                        lyrics_cache = get_synced_lyrics(title, artist)
+                        print(f"   가사 {len(lyrics_cache)}줄 로드됨")
+
+                        try:
+                            await websocket.send_json({
+                                "type": "recognized",
+                                "title": title,
+                                "artist": artist,
+                                "offset": offset,
+                                "lyrics": lyrics_cache
+                            })
+                        except Exception:
+                            break
+                    else:
+                        # 새로운 후보 등장
+                        candidate_song = song_key
+                        candidate_count = 1
+                        print(f"🔄 새 곡 후보: {title} - {artist} (1회)")
+                        try:
+                            await websocket.send_json({
+                                "type": "song_candidate",
+                                "title": title,
+                                "artist": artist,
+                                "message": "다른 곡 감지 - 확인 중..."
+                            })
+                        except Exception:
+                            break
                 else:
+                    # 같은 곡 → 후보 리셋 + 위치 업데이트
+                    candidate_song = None
+                    candidate_count = 0
                     print(f"📍 위치 업데이트: {title} - {offset:.1f}초")
                     try:
                         await websocket.send_json({
@@ -200,6 +266,13 @@ async def websocket_endpoint(websocket: WebSocket):
         )
     except Exception as e:
         print(f"WebSocket 오류: {e}")
+
+
+@app.get("/api/lyrics")
+async def get_lyrics(title: str, artist: str):
+    """곡 가사 조회 API (히스토리에서 가사 다시 보기용)"""
+    lyrics = get_synced_lyrics(title, artist)
+    return {"title": title, "artist": artist, "lyrics": lyrics}
 
 
 @app.get("/health")
